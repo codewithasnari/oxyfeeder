@@ -47,7 +47,7 @@ Kung usa ra ani ang malapas, maguba ang board. Naa nay 4 ka patay nga pin sa Ard
 - [ ] Fan
 - [ ] Buzzer
 - [ ] Solar Panel
-- [ ] Solar Charge Controller — **gamita ang MPPT.** Ang PWM spare ra, dili gamiton.
+- [ ] Solar Charge Controller — **PWM (BOSCA)** ang aktuwal nga gigamit. Terminal labels: `S1+/S1-` (panel), `S2+/S2-` (spare, 2nd panel), `B+/B-` (battery), `L+/L-` (LOAD output — mao ni ang "bulb icon" terminal). Mas maayo unta ang MPPT (mas efficient ang charging), pero PWM ra ang naa, ug okay ra ni — walay safety issue, ang LOAD output parehas ra ug uga sa laing bahin sa system.
 - [ ] Battery 12V
 - [ ] Toggle Switch
 - [ ] 6-way Fusebox
@@ -109,7 +109,7 @@ Ang servo ug ang GSM mo-hatag og kalit nga dako nga current (ang SIM800L mo-abot
 Solar Panel
    |
    v
-Charge Controller (MPPT)   <-- ang BATTERY i-sumpay UNA, dili ang panel
+Charge Controller (PWM)   <-- ang BATTERY i-sumpay UNA, dili ang panel
    |
    +--> Battery 12V
    |
@@ -122,17 +122,18 @@ Charge Controller (MPPT)   <-- ang BATTERY i-sumpay UNA, dili ang panel
       6-way Fusebox
 ```
 
-- [ ] **4.1** — Charge Controller **BATTERY terminal** → Battery
-  - `Controller BAT+ → Battery +`
-  - `Controller BAT- → Battery -`
+- [ ] **4.1** — Charge Controller **B+ / B-** (battery terminal) → Battery
+  - `Controller B+ → Battery +`
+  - `Controller B- → Battery -`
   - **Ang battery ang UNA gyud i-sumpay. Dili ang panel.**
-- [ ] **4.2** — Charge Controller **PV terminal** → Solar Panel
-  - `Controller PV+ → Panel +`
-  - `Controller PV- → Panel -`
+- [ ] **4.2** — Charge Controller **S1+ / S1-** (panel terminal) → Solar Panel
+  - `Controller S1+ → Panel +`
+  - `Controller S1- → Panel -`
+  - Bakante ra ang S2+/S2- (para sa 2nd panel, wala ta gigamit)
   - Taboni ang panel og tela samtang nag-wire
-- [ ] **4.3** — Charge Controller **LOAD+** → Toggle Switch terminal 1
+- [ ] **4.3** — Charge Controller **L+** (bulb icon / LOAD output) → Toggle Switch terminal 1
 - [ ] **4.4** — Toggle Switch terminal 2 → **Fusebox positive input**
-- [ ] **4.5** — Charge Controller **LOAD-** → **GND bus bar**
+- [ ] **4.5** — Charge Controller **L-** (bulb icon / LOAD output) → **GND bus bar**
 - [ ] **4.6** — **Fusebox ground** → **GND bus bar**
 
 ### Fuse assignments
