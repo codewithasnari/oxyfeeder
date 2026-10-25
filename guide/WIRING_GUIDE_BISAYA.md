@@ -1,15 +1,36 @@
 # OxyFeeder — Kompletong Wiring Guide (Bag-ong Wiring)
 
-**Para kang kinsa:** ang mag-wire sa system
-**Petsa:** Sept 27, 2026 · **Rev 3**
-**Status sa daan nga wiring:** GUBA — kinahanglan tanggalon TANAN ug sugdan pag-usab
-
-> ### 🔴 REV 3 — GAMITA NI, AYAW ANG DAAN NGA KOPYA
-> **Rev 2 (Sept 16):** ultrasonic = **Pin 13/48** (dili 22/23/24/25, ug **usa ra**) · HX711 **ayaw na i-wire** · dugang nga wire **ESP32 GPIO22 → Arduino Pin 19**
-> **Rev 3 (Sept 27):** buzzer **5V active na** (naa na, dili na 12V) · DO sensor **calibrated na** · dugang **smoothing capacitor** sa rail
+> # ⚠️ LUMA NA NI — GAMITA ANG REV 4
+> ### → [`WIRING_GUIDE_BISAYA_REV4.md`](WIRING_GUIDE_BISAYA_REV4.md) · English: [`docs/wiring-guide-rev4.md`](../docs/wiring-guide-rev4.md)
 >
-> ⚠️ **Kung naay lain nga AI o lain nga listahan nga mo-ingon og "DO sensor → A1" — SAYOP NA.**
-> **PATAY ang A1.** Ang DO sensor naa sa **A3**.
+> Gitipigan ra ni nga file para sa history. **Tulo ka butang dinhi ang sayop:**
+>
+> 1. **Servo sa 5V POWER rail** — ang DS S020B kay **6.0–7.4V** nga servo, dili mogana sa 5.1V. Kaugalingong 7.4V converter ang kinahanglan.
+> 2. **Buzzer nga 2 ka pin** — **3 ka pin** diay nga module (VCC · GND · I/O).
+> 3. **Fuse plan (5A/3A/5A/2A)** — giilisan na og **3A/3A/5A/2A/5A** tungod sa bag-ong servo branch.
+>
+> Ang uban dinhi tugma gihapon sa firmware, pero basaha ang Rev 4 — naa na didto ang mga pag-ayo ug ang troubleshooting gikan sa unang build.
+
+
+**Para kang kinsa:** ang mag-wire sa system
+**Petsa:** Sept 22, 2026 · **Rev 3**
+**Kahimtang:** bag-ong build — tanan nga module bulag na ug nakahan-ay na sa lamesa
+**English nga bersyon:** [`docs/wiring-guide.md`](../docs/wiring-guide.md) — parehas ang numero sa section, mao nga ang "Section 7.12" parehas ra og gipasabot sa duha ka file
+
+> ### 🔴 REV 3 — KUNG NAKITA NIMO ANG REV 1 O REV 2, AYAW NA GAMITA
+> Susiha ni upat kung nagsugod na ka gamit ang daan nga kopya:
+> 1. **Ultrasonic:** **Pin 13 (TRIG) ug Pin 48 (ECHO)** — dili Pin 22/23/24/25. Ug **usa ra** ka sensor, dili duha.
+> 2. **Load cell / HX711:** **AYAW NA I-WIRE.** Wala na gigamit — ang ultrasonic na ang mosukod sa feed level.
+> 3. **Bag-ong wire nga nakalimtan:** **ESP32 GPIO22 → Arduino Pin 19 (RX1).** Kinahanglan ni para sa schedules ug phone number.
+> 4. **L298N motor:** **IN1 = Pin 4, IN2 = Pin 5.** Ang daan nga papel nag-ingon Pin 10/11 — sayop na, dili mo-gana sa firmware karon.
+
+> ### Kini nga guide pareho sa firmware
+> Ang tanan nga pin dinhi gi-susi batok sa `firmware/oxyfeeder_firmware/oxyfeeder_firmware.ino` ug
+> `firmware/esp32_communicator/esp32_communicator.ino` niadtong Sept 22, 2026.
+>
+> **Ang mga daan nga dokumento supak niini ug sayop.** Ang `CLAUDE.md`, `docs/hardware-overview.md`,
+> ug `docs/sensor-list.md` naghisgot pa sa load cell, sa A0/A1, sa motor pin 10/11, ug sa logic level
+> shifter. Wala na na sa firmware. Kung magsumpaki ang duha ka dokumento, kini ang sundon.
 
 ---
 
@@ -59,22 +80,28 @@ Kung usa ra ani ang malapas, maguba ang board. Naa nay 4 ka patay nga pin sa Ard
 - [ ] Resistor **1K — 3 ka buok** (voltage divider)
 - [ ] Resistor **10K — 2 ka buok** (pull-down)
 - [ ] Capacitor **1000uF 16V — 1 ka buok** (para sa SIM800L)
-- [ ] Capacitor **470uF 16V — 2 ka buok** (smoothing sa kada 5V rail)
 - [ ] Wire **18AWG** (power) ug **22AWG** (signal)
 - [ ] Heat shrink / electrical tape
 - [ ] **Multimeter** — KINAHANGLAN GYUD. Ayaw sugdi kung wala.
 - [ ] Label tape / marker
 
+### Fuse
+- [ ] 5A x2, 3A x1, 2A x1
+
 ---
 
-## 2. TEARDOWN — TANGGALA TANAN
+## 2. SIGUROHA NGA BULAG NA ANG TANAN
+
+Bag-o ni nga build, mao nga pag-susi ra ni — dili na teardown. Duha ra ka minuto, pero importante gihapon.
 
 - [ ] **2.1** — OFF ang toggle switch
-- [ ] **2.2** — Tanggala ang battery sa charge controller (negative una, unya positive)
-- [ ] **2.3** — Tanggala ang solar panel sa charge controller
-- [ ] **2.4** — Sukda ang fusebox gamit multimeter. Dapat **0V**. Kung naay boltahe, ayaw og padayon.
-- [ ] **2.5** — Tanggala ang TANANG wire sa tanang module. Tanan gyud. Ayaw pag-pili.
+- [ ] **2.2** — Bulag ang battery sa charge controller
+- [ ] **2.3** — Bulag ang solar panel sa charge controller
+- [ ] **2.4** — Sukda ang fusebox gamit multimeter. Dapat **0V**. Kung naay boltahe, hunong ug pangitaa ngano.
+- [ ] **2.5** — Walay module nga naay nahibilin nga wire — apil ang mga gituohan nimo nga okay na
 - [ ] **2.6** — I-lain ang tanang module sa lamesa, linis, dili nagsapaw
+- [ ] **2.7** — Ipadaplin ang HX711 ug ang load cell, sa laing kahon kung mahimo. Dili ni parte sa build,
+  ug dili ka angay matintal ugma.
 
 ---
 
@@ -181,10 +208,6 @@ Charge Controller (MPPT)   <-- ang BATTERY i-sumpay UNA, dili ang panel
 - [ ] **5.12** — `Converter 5A OUT- → GND bus bar`
 - [ ] **5.13** — `Converter 3A OUT+ → 5V POWER bus bar` (18AWG)
 - [ ] **5.14** — `Converter 3A OUT- → GND bus bar`
-- [ ] **5.15** — **Smoothing capacitor:** i-solder ang **470uF** tapat sa kada 5V bus bar (+ sa 5V, – sa GND)
-  - Usa sa LOGIC rail, usa sa POWER rail
-  - Taas nga paa = **+**. Mubo nga paa (naay puti nga guhit) = **–**. **Kung mabaliktad, mobuto.**
-  - Kini ang mo-absorb sa kalit nga current spike — mao ni ang mo-pugong sa pag-reset sa ESP32
 
 ---
 
@@ -400,6 +423,9 @@ Dinhi moagi ang **phone number, feeding schedules, ug ang mga reply** gikan sa a
   - Ngano: dili nato gamiton ang onboard 5V regulator niya
   - **Ayaw gyud i-sumpay ang L298N 5V pin sa Arduino**
 
+> **Timan-i:** IN1 = Pin 4, IN2 = Pin 5. Ang daan nga dokumento nag-ingon Pin 10 ug Pin 11 —
+> luma na na ug dili mo-gana sa firmware karon.
+
 ### Servo Motor
 
 | GIKAN | PADULONG |
@@ -424,7 +450,7 @@ Dinhi moagi ang **phone number, feeding schedules, ug ang mga reply** gikan sa a
 | **GND bus bar** | Buzzer **–** |
 
 - [ ] **11.6** — Ang buzzer naa sa **lid (gawas)** sa enclosure
-- [ ] Gamita ang **5V active buzzer** (gi-ilisan na ang daan nga 12V panel buzzer)
+- [ ] NOTE: 12V pa ang buzzer karon — mahuyang ang tingog. Naghulat pa og 5V active buzzer.
 
 ---
 
@@ -546,12 +572,12 @@ Andama: multimeter probe sa **5V bus bar** ug **GND bus bar**.
 | Puti ang LCD | Naka-USB ang Arduino | Normal. Tanggala ang USB, gamit main power ra. |
 | Itom ang LCD, walay gikan | Kulang 5V o luag ang SPI wire | Sukda ang VCC **sa LCD mismo**, dili sa bus bar. Susiha ang 6 ka SPI wire. |
 | Ubos ang boltahe sa rail | Gagmay ra ang wire | Ilisi og 18AWG gikan sa converter ngadto sa bus bar |
-| **DO = 0.00** | Naka-wire sa **A1** imbes **A3** | **Susiha ni una.** Patay ang A1 — 0 gyud ang basa bisag unsa. Balhina sa **A3**. |
-| DO naay basa pero sayop | Nawad-an og electrolyte ang probe | Na-calibrate na ni (zero solution + air). Kung mo-drift, i-recalibrate. |
+| **DO = 0.00** | **UGA ang probe — walay electrolyte** | **DILI ni wiring problem.** Naghulat pa ta og NaOH 0.5 mol/L. Ayaw og pangita og sayop sa wiring. |
 | **RTC = 00:00** | Patay ang coin cell, o dili makita sa I2C | Sukda ang CR2032 (2.8V pataas). I-run ang I2C scanner — dapat makita ang **0x68**. |
 | Mo-reset ang ESP32 inig lihok sa servo | Parehas silag rail | Ibalhin ang servo sa **POWER rail** |
 | Walay data sa app | Nabuak ang voltage divider, o dili common ang GND | Sukda ang junction: dapat **mga 3V** samtang nag-send ang Arduino |
 | Dili mo-gana ang Feed Now | Luag ang pull-down o sayop ang pin | Susiha: 10K sa Pin 17 → GND. Susiha ang wire gikan sa ESP32 D12. |
+| **Dili mo-save ang schedules / phone number** | **Wala ang wire nga GPIO22 → Pin 19** | Mao ni ang wire nga permi makalimtan. Tan-awa ang step 7.12. |
 | Walay SMS | Walay SIM, luag ang SIM, o kulang kuryente | Butangi og papel sa likod sa SIM. Susiha ang 1000uF cap. |
 | Init kaayo ang converter | Sobra ang load | Bahina ang load. Susiha kung tama ang rail sa kada module. |
 | Mo-reset ang Arduino kada karon ug unya | Luag nga 5V wire o GND | Hugti tanan. Sukda ang 5V direkta sa Arduino pin. |
@@ -582,3 +608,17 @@ Andama: multimeter probe sa **5V bus bar** ug **GND bus bar**.
 7. Ang **load cell/HX711 naka-comment out na** sa firmware — ang ultrasonic (Pin 13/48) na ang feed level sensor
 8. Ang hopper calibration naa sa `HOPPER_EMPTY_CM = 37` ug `HOPPER_FULL_CM = 5` — usba ni sumala sa aktuwal nga hopper
 9. Ang ESP32 mo-send og commands sa Arduino **Pin 19 (RX1)** gikan sa **GPIO22** — dili lang GPIO pulse
+
+---
+
+## 19. PAG-SYNC SA DOKUMENTO
+
+Kini nga file ug ang [`docs/wiring-guide.md`](../docs/wiring-guide.md) parehas ra nga guide sa duha ka
+pinulongan, ug **parehas ang numero sa section**. Kung usbon nimo ang usa ka wire sa usa, usba pod sa
+pikas, ug taasi ang Rev sa duha ka header.
+
+| Rev | Petsa | Giusab |
+|-----|-------|--------|
+| 1 | — | Orihinal (luma na — sayop ang ultrasonic pin ug naa pa ang load cell) |
+| 2 | Sept 16, 2026 | Ultrasonic gibalhin sa Pin 13/48, gitangtang ang load cell, gidugang ang GPIO22 → Pin 19 |
+| 3 | Sept 22, 2026 | Gidugang ang English nga bersyon; gi-usab para sa bag-ong build imbes teardown; gi-susi usab ang pin table batok sa firmware; gidugang ang L298N nga nota ug ang troubleshooting row para sa schedules |

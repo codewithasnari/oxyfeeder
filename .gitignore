@@ -24,3 +24,15 @@
 
 ## APK builds (upload to Drive instead)
 *.apk
+
+## Excel temporary and recovery files
+~$*.xlsx
+*(AutoRecovered).xlsx
+
+## JVM / Gradle crash logs
+hs_err_pid*.log
+replay_pid*.log
+**/.kotlin/errors/
+
+## Windows reserved name - never commit a file called 'nul'
+nul

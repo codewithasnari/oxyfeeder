@@ -1,0 +1,21 @@
+# Normalise line endings so Windows/Linux checkouts stop producing
+# whole-file diffs. Without this a ZIP download re-committed from
+# Windows shows ~35 files as "modified" with no real content change.
+* text=auto
+
+*.ino   text
+*.dart  text
+*.md    text
+*.yaml  text
+*.yml   text
+*.json  text
+*.gradle text
+*.kts   text
+
+*.png   binary
+*.jpg   binary
+*.ico   binary
+*.xlsx  binary
+*.zip   binary
+*.apk   binary
+*.ttf   binary
