@@ -134,9 +134,37 @@ int LOW_BATTERY_THRESHOLD = 10;     // % - trigger warning below this
 
 // Voltage sensor calibration
 // 0-25V module with voltage divider ratio of 5:1
-const float VOLTAGE_RATIO = 4.57;  // Calibrated: actual/measured = 11.7/12.8
-const float BATTERY_FULL_VOLTAGE = 14.4;  // 12V battery fully charged
-const float BATTERY_EMPTY_VOLTAGE = 11.0; // 12V battery empty
+//
+// Calibrated 10 Oct 2026 against the replacement voltage sensor.
+//   multimeter at the battery terminals : 12.22 V
+//   firmware reported (old ratio 4.57)  : 11.20 V
+//   new ratio = 4.57 * (12.22 / 11.20)  = 4.99
+//
+// To redo this if the sensor module is ever changed again:
+//   1. Measure the battery with a multimeter
+//   2. Read what the firmware reports
+//   3. new ratio = current ratio * (multimeter / reported)
+const float VOLTAGE_RATIO = 4.99;
+
+// Battery state of charge, 12V lead-acid, measured AT REST.
+//
+// These were previously 14.4 / 11.0, which was wrong. 14.4V is the CHARGING
+// voltage — a battery only reaches it while the controller is pushing current
+// in. At rest a fully charged 12V lead-acid battery sits at about 12.7V, so
+// under the old numbers a completely full battery could never read above 50%.
+//
+// Reference (resting voltage -> state of charge):
+//   12.73V = 100%   12.50V = 80%   12.24V = 60%
+//   11.96V =  40%   11.81V = 30%   11.51V = 10%
+//
+// Empty is set at 11.8V on purpose, not 11.0V. Taking lead-acid below roughly
+// 11.8V shortens its life sharply, so the alert should fire while there is
+// still usable charge rather than at the point of damage.
+const float BATTERY_FULL_VOLTAGE  = 12.7;  // resting, fully charged
+const float BATTERY_EMPTY_VOLTAGE = 11.8;  // stop here to protect the battery
+
+// NOTE: while the solar controller is charging, the battery reads 13.5-14.4V
+// and the percentage simply clamps at 100%. That is expected, not a fault.
 
 // Update intervals
 const unsigned long SENSOR_UPDATE_INTERVAL = 2000;   // 2 seconds
@@ -185,15 +213,21 @@ bool lastFeedingDone = false;  // Prevents repeated feeding in same minute
 unsigned long lastSmsSent = 0;
 const unsigned long SMS_COOLDOWN = 10000;  // 10 seconds (testing mode)
 
-// Per-alert SMS timers — prevent re-sending same alert too often
-unsigned long lastLowFeedSms = 0;
-unsigned long lastLowBatterySms = 0;
-const unsigned long ALERT_SMS_INTERVAL = 3600000UL;  // 1 hour between same-type alerts
+// Combined-alert SMS state. One text covers every condition that is currently
+// out of range; lastAlertMask remembers which combination was last reported so
+// a NEW problem appearing sends straight away instead of waiting the interval.
+//   bit 0 = low DO   bit 1 = low feed   bit 2 = low battery
+unsigned long lastAlertSms = 0;
+byte lastAlertMask = 0;
+const unsigned long ALERT_SMS_INTERVAL = 3600000UL;  // 1 hour while a problem persists
+
+// Send a confirmation text after each feed. Set false to stop these.
+#define SMS_ON_FEED true
 
 // SMS Phone Number (stored in EEPROM)
 #define EEPROM_PHONE_ADDR 0       // EEPROM starting address for phone number
 #define PHONE_NUMBER_LENGTH 15    // Max length of phone number
-char smsPhoneNumber[PHONE_NUMBER_LENGTH + 1] = "09550717546";  // Default number (local format)
+char smsPhoneNumber[PHONE_NUMBER_LENGTH + 1] = "+639550717546";  // Default number (international format — some networks reject local format for AT+CMGS)
 
 // Command buffer for receiving from ESP32
 String commandBuffer = "";
@@ -235,6 +269,7 @@ void checkSafetyAlerts();
 // Phone number and command handling
 void loadPhoneNumberFromEEPROM();
 void savePhoneNumberToEEPROM();
+void normalizePhoneNumber();
 void processIncomingCommands();
 void handleCommand(String command);
 
@@ -365,10 +400,27 @@ void initSensors() {
   
   // Initialize I2C for RTC
   Wire.begin();
-  
-  // Initialize RTC (DS3231)
+
+  // ---- I2C SAFETY GUARD -----------------------------------------------
+  // A damaged DS3231 can hold SDA or SCL low. Wire has no timeout by
+  // default on AVR, so rtc.begin() then blocks FOREVER — setup() never
+  // finishes, and the LCD, GSM and the whole main loop never start.
+  // That single hang looks like three unrelated faults at once.
+  //
+  // 25ms timeout, and reset the bus if it trips.
+  Wire.setWireTimeout(25000, true);
+
+  // Probe for the RTC at 0x68 before handing control to the library.
   Serial.print(F("  - RTC DS3231: "));
-  if (rtc.begin()) {
+  Wire.beginTransmission(0x68);
+  bool rtcResponds = (Wire.endTransmission() == 0);
+
+  if (!rtcResponds) {
+    rtcAvailable = false;
+    Serial.println(F("NOT FOUND - continuing without it"));
+    Serial.println(F("    Scheduled feeding is disabled."));
+    Serial.println(F("    Check the module, the CR2032, and pins 20/21."));
+  } else if (rtc.begin()) {
     rtcAvailable = true;
     
     // Only set RTC if it lost power (battery died)
@@ -554,9 +606,8 @@ float readBatteryVoltage() {
 int readBatteryPercent() {
   float voltage = currentBatteryVoltage;
   
-  // Map voltage to percentage
-  // 11.0V = 0%, 14.4V = 100%
-  int percent = map(voltage * 100, BATTERY_EMPTY_VOLTAGE * 100, 
+  // Map resting voltage to percentage: 11.8V = 0%, 12.7V = 100%
+  int percent = map(voltage * 100, BATTERY_EMPTY_VOLTAGE * 100,
                     BATTERY_FULL_VOLTAGE * 100, 0, 100);
   
   // Clamp to 0-100%
@@ -659,6 +710,24 @@ void dispenseFeed(int seconds) {
 
   Serial.println(F("[FEEDING] Complete!"));
   triggerAlarm();  // Beep to confirm
+
+  // Confirmation text. Note the Arduino cannot tell a scheduled feed from a
+  // manual one — both arrive as the same GPIO pulse from the ESP32 — so this
+  // goes out after every feed. Set SMS_ON_FEED to false to turn it off.
+  //
+  // sendSMS() blocks for up to ~20 seconds, so the main loop pauses here.
+  // That is after the motor has already stopped, so the feed itself is
+  // unaffected, but sensor readings and app updates stall briefly.
+#if SMS_ON_FEED
+  {
+    char msg[120];
+    snprintf(msg, sizeof(msg),
+             "OxyFeeder: Feeding completed (%ds). Feed level now %d%%.",
+             seconds, currentFeedLevel);
+    sendSMS(msg);
+  }
+#endif
+
   isFeeding = false;
 }
 
@@ -868,6 +937,15 @@ void sendSMS(const char* message) {
   // Clear any leftover data in SIM800L buffer
   while (Serial3.available()) Serial3.read();
 
+  // Turn OFF command echo. The SIM800L repeats back everything it receives,
+  // so the 37-character message body comes straight back while we are not
+  // reading — which overflows the 64-byte Serial3 receive buffer and destroys
+  // the "+CMGS:" confirmation that follows it. Without this the send can
+  // actually succeed while the firmware reports FAILED.
+  Serial3.println(F("ATE0"));
+  delay(300);
+  while (Serial3.available()) Serial3.read();
+
   // Retry CPIN check up to 3 times — module sometimes needs a moment to settle
   // after a previous failed attempt. If still failing, do a soft reset.
   String pinResponse = "";
@@ -928,6 +1006,24 @@ void sendSMS(const char* message) {
   // +CREG: 0,1 = registered home, +CREG: 0,5 = roaming
   if (regResponse.indexOf(",1") == -1 && regResponse.indexOf(",5") == -1) {
     Serial.println(F("[GSM] ERROR: Not registered to network"));
+
+    // Why did registration fail? Print the numbers that decide it.
+    // CSQ  = signal strength, 0-31. Under 10 is too weak to register,
+    //        99 means the antenna is not receiving anything at all.
+    // COPS = which operator it has selected, if any.
+    while (Serial3.available()) Serial3.read();
+    Serial3.println(F("AT+CSQ"));
+    delay(1000);
+    Serial.print(F("[GSM] Signal quality: "));
+    while (Serial3.available()) Serial.write(Serial3.read());
+    Serial.println();
+
+    Serial3.println(F("AT+COPS?"));
+    delay(1500);
+    Serial.print(F("[GSM] Operator: "));
+    while (Serial3.available()) Serial.write(Serial3.read());
+    Serial.println();
+
     return;
   }
 
@@ -991,6 +1087,23 @@ void sendSMS(const char* message) {
     Serial.println(F("[GSM] SMS FAILED! Check SIM/signal."));
     Serial.print(F("[GSM] Response: "));
     Serial.println(response);
+
+    // Diagnostics — only runs when a send fails, so it costs nothing normally.
+    // CSCA = message centre number. Blank means the SIM's SMSC was not picked
+    // up and every send will fail no matter how good the signal is.
+    // CSQ  = signal quality: 0-31, usable from about 10 up. 99 = no signal.
+    while (Serial3.available()) Serial3.read();
+    Serial3.println(F("AT+CSCA?"));
+    delay(1000);
+    Serial.print(F("[GSM] Message centre: "));
+    while (Serial3.available()) Serial.write(Serial3.read());
+    Serial.println();
+
+    Serial3.println(F("AT+CSQ"));
+    delay(1000);
+    Serial.print(F("[GSM] Signal quality: "));
+    while (Serial3.available()) Serial.write(Serial3.read());
+    Serial.println();
   }
 }
 
@@ -1032,49 +1145,77 @@ void runFeedingSequence() {
 }
 
 void checkSafetyAlerts() {
-  // NOTE: SMS alerts are now handled by ESP32 (synced thresholds from app).
-  // Arduino only handles buzzer here as a safety fallback with hardcoded thresholds.
+  // Sends ONE combined SMS covering every condition that is currently out of
+  // range, rather than a separate text per problem. If feed and battery are
+  // both low you get one message naming both, not two messages.
+  //
+  // A new text goes out when:
+  //   - the SET of active alerts changes (a new problem appeared), or
+  //   - ALERT_SMS_INTERVAL has passed and the problem is still there
+  // Once everything is back in range the state resets, so the next problem
+  // texts immediately instead of waiting out the interval.
   unsigned long nowAlert = millis();
-  bool anyAlert = false;
 
-  // Check for critical low dissolved oxygen
-  if (currentDissolvedOxygen < DO_CRITICAL_THRESHOLD && currentDissolvedOxygen > 0) {
-    anyAlert = true;
-    if (nowAlert - lastWarningPrint >= 10000) {
-      Serial.println(F("[ALERT] CRITICAL: Low Dissolved Oxygen!"));
-    }
-  }
+  bool doLow   = (currentDissolvedOxygen < DO_CRITICAL_THRESHOLD && currentDissolvedOxygen > 0);
+  bool feedLow = (currentFeedLevel < LOW_FEED_THRESHOLD && currentFeedLevel >= 0);
+  bool battLow = (currentBatteryPercent < LOW_BATTERY_THRESHOLD && currentBatteryPercent > 0);
+  bool anyAlert = doLow || feedLow || battLow;
 
-  // Check for low feed level
-  if (currentFeedLevel < LOW_FEED_THRESHOLD && currentFeedLevel >= 0) {
-    anyAlert = true;
-    if (nowAlert - lastWarningPrint >= 10000) {
-      Serial.println(F("[WARNING] Low feed level detected"));
-    }
-    if (lastLowFeedSms == 0 || nowAlert - lastLowFeedSms >= ALERT_SMS_INTERVAL) {
-      lastLowFeedSms = nowAlert;
-      sendSMS("OxyFeeder ALERT: Low feed level! Please refill the hopper.");
-    }
-  }
+  // One bit per alert type — lets us notice when the combination changes
+  byte alertMask = (doLow ? 1 : 0) | (feedLow ? 2 : 0) | (battLow ? 4 : 0);
 
-  // Check for low battery
-  if (currentBatteryPercent < LOW_BATTERY_THRESHOLD && currentBatteryPercent > 0) {
-    anyAlert = true;
-    if (nowAlert - lastWarningPrint >= 10000) {
-      Serial.println(F("[WARNING] Low battery detected"));
-    }
-    if (lastLowBatterySms == 0 || nowAlert - lastLowBatterySms >= ALERT_SMS_INTERVAL) {
-      lastLowBatterySms = nowAlert;
-      sendSMS("OxyFeeder ALERT: Low battery! Please check power system.");
-    }
-  }
-
-  // Update warning print timer
+  // Serial logging, throttled
   if (nowAlert - lastWarningPrint >= 10000) {
+    if (doLow)   Serial.println(F("[ALERT] CRITICAL: Low Dissolved Oxygen!"));
+    if (feedLow) Serial.println(F("[WARNING] Low feed level detected"));
+    if (battLow) Serial.println(F("[WARNING] Low battery detected"));
     lastWarningPrint = nowAlert;
   }
 
-  // Buzzer alert: beep every 30 seconds while any alert is active
+  if (anyAlert) {
+    bool combinationChanged = (alertMask != lastAlertMask);
+    bool intervalElapsed    = (lastAlertSms == 0) ||
+                              (nowAlert - lastAlertSms >= ALERT_SMS_INTERVAL);
+
+    if (combinationChanged || intervalElapsed) {
+      lastAlertSms  = nowAlert;
+      lastAlertMask = alertMask;
+
+      // Build one message naming every active problem. Kept short so the
+      // whole thing fits in a single 160-character SMS.
+      char msg[160];
+      char parts[120] = "";
+
+      if (doLow) {
+        char p[40];
+        snprintf(p, sizeof(p), "Low DO %d.%d mg/L. ",
+                 (int)currentDissolvedOxygen,
+                 (int)(currentDissolvedOxygen * 10) % 10);
+        strncat(parts, p, sizeof(parts) - strlen(parts) - 1);
+      }
+      if (feedLow) {
+        char p[40];
+        snprintf(p, sizeof(p), "Low feed %d%%. ", currentFeedLevel);
+        strncat(parts, p, sizeof(parts) - strlen(parts) - 1);
+      }
+      if (battLow) {
+        char p[40];
+        snprintf(p, sizeof(p), "Low battery %d%% (%d.%dV). ",
+                 currentBatteryPercent,
+                 (int)currentBatteryVoltage,
+                 (int)(currentBatteryVoltage * 10) % 10);
+        strncat(parts, p, sizeof(parts) - strlen(parts) - 1);
+      }
+
+      snprintf(msg, sizeof(msg), "OxyFeeder ALERT: %sPlease check the system.", parts);
+      sendSMS(msg);
+    }
+  } else {
+    // All clear — reset so the next problem texts straight away
+    lastAlertMask = 0;
+  }
+
+  // Buzzer: beep every 30 seconds while any alert is active
   if (anyAlert && (nowAlert - lastBuzzerAlert >= BUZZER_ALERT_INTERVAL)) {
     lastBuzzerAlert = nowAlert;
     triggerAlarm();
@@ -1084,13 +1225,34 @@ void checkSafetyAlerts() {
 // EEPROM & COMMAND HANDLING FUNCTIONS
 // ============================================================================
 
+// Convert a Philippine local number (09xxxxxxxxx) to international
+// (+639xxxxxxxxx). Networks commonly reject the local form in AT+CMGS, and the
+// app's own hint uses +639..., so normalise whatever we end up holding.
+// Runs after loading from EEPROM and after the app or USB sets a new number.
+void normalizePhoneNumber() {
+  if (smsPhoneNumber[0] == '+') return;   // already international
+
+  if (smsPhoneNumber[0] == '0' && smsPhoneNumber[1] == '9') {
+    char tmp[PHONE_NUMBER_LENGTH + 1];
+    snprintf(tmp, sizeof(tmp), "+63%s", smsPhoneNumber + 1);  // drop leading 0
+    strncpy(smsPhoneNumber, tmp, PHONE_NUMBER_LENGTH);
+    smsPhoneNumber[PHONE_NUMBER_LENGTH] = '\0';
+
+    Serial.print(F("[GSM] Number converted to international: "));
+    Serial.println(smsPhoneNumber);
+  }
+}
+
 void loadPhoneNumberFromEEPROM() {
   Serial.print(F("[EEPROM] Loading phone number... "));
   
-  // Check if EEPROM has valid data (first byte should be '+')
+  // Check if EEPROM has valid data.
+  // Accept '+' (international) OR a leading digit (local format such as 09xx).
+  // Previously only '+' was accepted, so a number saved in local format was
+  // silently discarded on every reboot and the default came back instead.
   char firstChar = EEPROM.read(EEPROM_PHONE_ADDR);
-  
-  if (firstChar == '+') {
+
+  if (firstChar == '+' || (firstChar >= '0' && firstChar <= '9')) {
     // Read phone number from EEPROM
     for (int i = 0; i < PHONE_NUMBER_LENGTH; i++) {
       char c = EEPROM.read(EEPROM_PHONE_ADDR + i);
@@ -1108,6 +1270,9 @@ void loadPhoneNumberFromEEPROM() {
     Serial.print(F("[EEPROM] Default: "));
     Serial.println(smsPhoneNumber);
   }
+
+  // Whatever we ended up with, make sure it is in international format
+  normalizePhoneNumber();
 }
 
 void savePhoneNumberToEEPROM() {
@@ -1216,6 +1381,7 @@ void handleCommand(String command) {
     // Set phone number
     if (cmdValue.length() > 0 && cmdValue.length() <= PHONE_NUMBER_LENGTH) {
       cmdValue.toCharArray(smsPhoneNumber, PHONE_NUMBER_LENGTH + 1);
+      normalizePhoneNumber();   // 09xx... -> +639xx... before storing
       savePhoneNumberToEEPROM();
       Serial.print(F("[CMD] Phone number updated to: "));
       Serial.println(smsPhoneNumber);
